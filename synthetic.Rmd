@@ -1,0 +1,174 @@
+---
+title: "Mapping capelin synthesis maps to Atlantis GOA"
+author: "Alberto Rovellini"
+date: "10/26/2021"
+output:
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rbgm)
+library(sf)
+library(maps)
+library(mapdata)
+library(tidyverse)
+library(viridis)
+```
+
+```{r}
+select <- dplyr::select
+```
+
+
+This document maps the capelin synthetic maps developed by David McGowan (NOAA) for [this paper](https://doi.org/10.3354/meps13211) to the Atlantis GOA model geometry. There are four data sets:
+
+1. The EcoFOCI late-summer small-mesh trawl surveys (2000-2015).
+2. The RACE-GAP summer bottom trawl surveys (2001-2015).
+3. The GOAIERP AT surveys (2011-2013).
+4. The MACE summer AT surveys 2003-2013.
+
+All of these were aggregated on a 20 nmi x 20 nmi grid.
+
+# Read data
+```{r}
+ecofoci <- read.csv('../data/synthesis/Capelin synthesis_EcoFOCI late-summer small-mesh trawl survey 2000-2015_20x20nmi grid.csv')
+race <- read.csv('../data/synthesis/Capelin synthesis_GAP summer GOA BT survey 2001-2015_20x20nmi grid.csv')
+goaierp <- read.csv('../data/synthesis/Capelin synthesis_GOAIERP AT survey 2011-2013_20x20nmi grid.csv')
+mace <- read.csv('../data/synthesis/Capelin synthesis_MACE summer GOA AT survey 2003-2013_20x20nmi grid.csv')
+
+# read atlantis BGM
+atlantis_bgm <- read_bgm('../data/GOA_WGS84_V4_final.bgm')
+atlantis_box <- atlantis_bgm %>% box_sf()
+# utilities
+atlantis_crs <- atlantis_bgm$extra$projection
+atlantis_bbox <- atlantis_box %>% st_bbox()
+
+# coast mask
+coast <- maps::map("worldHires", regions = c("Canada", "USA"), plot = FALSE, fill = TRUE)
+coast_sf <- coast %>% st_as_sf() %>% st_transform(crs = atlantis_crs) %>% st_combine()
+```
+
+Turn to `sf` objects and reproject to Atlantis. At this stage also introduce the deciles for the normalized density for each survey. It is not clear how these were calculated, since the many zeroes in the data cause issues with placing values in the appropriate percentiles. Do they calculate the percentiles on the non-zero values? 
+```{r}
+# need to work out quantiles without zeroes?? unclear from data
+# this has the purpose of comparing with the plots in the manuscript, for the actual averaging I will use the normalized density
+q_ecofoci <- quantile(ecofoci$Pcent_TL_mn[ecofoci$Pcent_TL_mn>0], probs = seq(0,1,0.1))
+q_race <- quantile(race$Pcent_TL_mn[race$Pcent_TL_mn>0], probs = seq(0,1,0.1))
+q_goaierp <- quantile(goaierp$Pcent_TL_mn[goaierp$Pcent_TL_mn>0], probs = seq(0,1,0.1))
+q_mace <- quantile(mace$Pcent_TL_mn[mace$Pcent_TL_mn>0], probs = seq(0,1,0.1))
+
+ecofoci_sf <- ecofoci %>% 
+  select(-Shape,-LON_UTM5N,-LAT_UTM5N) %>% 
+  mutate(Set='ecofoci',
+         Quantiles = findInterval(Pcent_TL_mn, q_ecofoci, all.inside = TRUE)) %>%# do deciles for plot comparison but then work with normalized densities
+  st_as_sf(coords=c('LON_DD','LAT_DD'), crs = 4326) %>%
+  st_transform(crs=atlantis_crs)
+
+race_sf <- race %>% 
+  select(-Shape,-LON_UTM5N,-LAT_UTM5N) %>% 
+  mutate(Set='race',
+         Quantiles = findInterval(Pcent_TL_mn, q_race, all.inside = TRUE)) %>% 
+  st_as_sf(coords=c('LON_DD','LAT_DD'), crs = 4326) %>%
+  st_transform(crs=atlantis_crs)
+
+goaierp_sf <- goaierp %>% 
+  select(-Shape,-LON_UTM5N,-LAT_UTM5N) %>% 
+  mutate(Set='goaierp',
+         Quantiles = findInterval(Pcent_TL_mn, q_goaierp, all.inside = TRUE)) %>% 
+  st_as_sf(coords=c('LON_DD','LAT_DD'), crs = 4326) %>%
+  st_transform(crs=atlantis_crs)
+
+mace_sf <- mace %>% 
+  select(-Shape,-LON_UTM5N,-LAT_UTM5N) %>% 
+  mutate(Set='mace',
+         Quantiles = findInterval(Pcent_TL_mn, q_mace, all.inside = TRUE)) %>% 
+  st_as_sf(coords=c('LON_DD','LAT_DD'), crs = 4326) %>%
+  st_transform(crs=atlantis_crs)
+```
+
+Try and replicate Figure 8 from [the paper](https://doi.org/10.3354/meps13211).
+```{r, fig.width=12, fig.height=18}
+capelin_all <- rbind(ecofoci_sf,race_sf,goaierp_sf,mace_sf)
+
+capelin_all %>% 
+  mutate(Quantiles=na_if(Quantiles,1)) %>% # for ease of comparison with Fig. 8
+  ggplot()+
+  geom_sf(aes(color=Quantiles), size=3, shape = 15)+
+  scale_color_gradient(low = "yellow", high = "red", na.value = 'grey')+
+  geom_sf(data=atlantis_box, fill = NA)+
+  geom_sf(data=coast_sf)+
+  coord_sf(xlim=c(atlantis_bbox$xmin,atlantis_bbox$xmax), ylim=c(atlantis_bbox$ymin,atlantis_bbox$ymax))+
+  theme_bw()+
+  facet_wrap(~Set,ncol=1)+
+  labs(title = 'Offshore distributions of normalized density percentiles')
+```
+Not too sure how the percentiles of the normalized density are calculated in the manuscript, but they are slightly different from these. Probably close enough for our purpose here - we are mapping normalized densities and not percentiles here.
+
+Map the same data as points - helps me see what falls out of the model domain.
+```{r,fig.width=12, fig.height=18}
+capelin_all %>% 
+  ggplot()+
+  geom_sf(aes(color=Pcent_TL_mn), size=3)+
+  scale_color_viridis()+
+  geom_sf(data=atlantis_box, fill = NA)+
+  geom_sf(data=coast_sf)+
+  coord_sf(xlim=c(atlantis_bbox$xmin,atlantis_bbox$xmax), ylim=c(atlantis_bbox$ymin,atlantis_bbox$ymax))+
+  theme_bw()+
+  facet_wrap(~Set, ncol = 1)+
+  labs(title = 'Offshore distributions of normalized density percentiles')
+```
+A few data points fall close to the coast (RACE-GAP) or offshore of the boundary boxes (MACE), so they will not be captured in the Atlantis GOA domain.
+
+# Map to Atlantis
+
+Probably not particularly worth it to recreate the grids, if then we need to map them to the Atlantis boxes anyway as opposed to averaging cell by cell (Dave said the cells of different rasters are offset "because the grids were created based on the distribution for each survey"). This is qualitative anyway. 
+Map individual points to the Atlantis boxes for each data set, take an average per box, take averages by dataset for where we have overlap of different data sets.
+
+The risk with not mapping the 20x20 nmi squares to the boxes is that we may have poor coverage of some boxes and/or over/underestimate density in some boxes. However, we are working with normalized density here, so doing an area mapping of one cell square to an Atlantis box would be problematic anyway (what would we do, split the relative density between the two boxes? Or assign that relative density to both boxes? Or only to the box with the most cell area in it?).
+
+Also the spatial alignment of the Atlantis boxes with hotspots of capelin density will determine whether such hotspots are captured in Atlantis or they get lost/buffered by other values in the same box.
+```{r}
+capelin_atlantis <- capelin_all %>% 
+  st_join(atlantis_box %>% select(.bx0,boundary,area)) %>%
+  drop_na() %>%  # get rid of points that fall outside the model domain
+  group_by(Set,.bx0) %>% # first take average by box by survey
+  summarise(Mean_box_survey = mean(Pcent_TL_mn,na.rm=T)) %>% 
+  ungroup() %>%
+  group_by(.bx0) %>% # now take averages by box for all surveys
+  summarise(Mean_box = mean(Mean_box_survey,na.rm=T)) %>% 
+  ungroup()
+```
+
+Join back with Atlantis set and map this.
+```{r, fig.width=12, fig.height=5}
+atlantis_box_cap <- atlantis_box %>% 
+  left_join(capelin_atlantis %>% st_set_geometry(NULL), by='.bx0') %>% 
+  rowwise() %>% 
+  mutate(Mean_box = ifelse(isTRUE(boundary),NA,Mean_box)) %>% 
+  ungroup() %>% 
+  mutate(Prop = Mean_box/sum(Mean_box,na.rm=T))
+
+atlantis_box_cap %>% ggplot()+
+  geom_sf(aes(fill=Prop))+
+  scale_fill_viridis()+
+  geom_sf(data=coast_sf)+
+  coord_sf(xlim=c(atlantis_bbox$xmin,atlantis_bbox$xmax), ylim=c(atlantis_bbox$ymin,atlantis_bbox$ymax))+
+  theme_bw()+
+  labs(title = 'Capelin synthetic distributions in the GOA', fill = 'Proportion of \ntotal biomass')
+```
+
+The proportion of total normalized density per box will be used to seed the biomass from a biomass estimate to the model domain. 
+
+Present issues:
+
+1. Dave said that there is no biomass estimate for capelin for the GOA, so not sure what to use for that step.
+2. BC is missing.
+3. Density seems to be overestimated for crescent box SW of Kodiak - this is bound to happen with the method of assigning points to potentially large and oddly-shaped boxes.
+4. This is calculated from normalized density averaged across boxes and across surveys, with surveys having different coverage (other than different catchability). However, this map seems to align decently with Figure 13. ![Figure 13 from McGowan et al. 2020](image.png).
