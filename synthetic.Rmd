@@ -175,19 +175,22 @@ Present issues:
 
 Write out. We need to populate the empty boxes with a number. Zero is drastic, then again there are plenty of zero values in the raster I was given. Let's go with the smallest proportion in the model domain and take it away from the largest. Do so for zero values too. It is close enough to zero but will not prevent the species from existing in those boxes entirely. 
 ```{r}
+# turn NAs to zeroes for this step
 atlantis_box_cap$Prop[is.na(atlantis_box_cap$Prop)] <- 0
 
-capelin_s1_s4 <- atlantis_box_cap %>% select(.bx0,Prop) %>% st_set_geometry(NULL) 
+capelin_s1_s4 <- atlantis_box_cap %>% 
+  select(.bx0,botz,boundary,Prop) %>% 
+  st_set_geometry(NULL) 
 
 # find smallest non-zero value of the proportion
-cap_min_prop <- capelin_s1_s4 %>% select(Prop) %>% filter(Prop>0) %>% pull() %>% min()
-cap_max_prop <- capelin_s1_s4 %>% select(Prop) %>% filter(Prop>0) %>% pull() %>% max()
+cap_min_prop <- capelin_s1_s4 %>% filter(Prop>0 & boundary==F & botz < 0) %>% select(Prop) %>% pull() %>% min()
+cap_max_prop <- capelin_s1_s4 %>% filter(Prop>0 & boundary==F & botz < 0) %>% select(Prop) %>% pull() %>% max()
 
 # how many boxes have a zero value?
-box_no_capelin <- capelin_s1_s4 %>% filter(Prop==0) %>% pull(Prop) %>% length() # 60 boxes!
+box_no_capelin <- capelin_s1_s4 %>% filter(Prop==0 & boundary==F & botz < 0) %>% pull(Prop) %>% length()
 
 # change props
-capelin_s1_s4$Prop[capelin_s1_s4$Prop==0] <- cap_min_prop
+capelin_s1_s4$Prop[capelin_s1_s4$Prop==0 & capelin_s1_s4$boundary==F & capelin_s1_s4$botz < 0] <- cap_min_prop
 capelin_s1_s4$Prop[capelin_s1_s4$Prop==cap_max_prop] <- capelin_s1_s4$Prop[capelin_s1_s4$Prop==cap_max_prop]-(cap_min_prop*box_no_capelin)
 ```
 
