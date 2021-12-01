@@ -172,3 +172,26 @@ Present issues:
 2. BC is missing.
 3. Density seems to be overestimated for crescent box SW of Kodiak - this is bound to happen with the method of assigning points to potentially large and oddly-shaped boxes.
 4. This is calculated from normalized density averaged across boxes and across surveys, with surveys having different coverage (other than different catchability). However, this map seems to align decently with Figure 13. ![Figure 13 from McGowan et al. 2020](image.png).
+
+Write out. We need to populate the empty boxes with a number. Zero is drastic, then again there are plenty of zero values in the raster I was given. Let's go with the smallest proportion in the model domain and take it away from the largest. Do so for zero values too. It is close enough to zero but will not prevent the species from existing in those boxes entirely. 
+```{r}
+atlantis_box_cap$Prop[is.na(atlantis_box_cap$Prop)] <- 0
+
+capelin_s1_s4 <- atlantis_box_cap %>% select(.bx0,Prop) %>% st_set_geometry(NULL) 
+
+# find smallest non-zero value of the proportion
+cap_min_prop <- capelin_s1_s4 %>% select(Prop) %>% filter(Prop>0) %>% pull() %>% min()
+cap_max_prop <- capelin_s1_s4 %>% select(Prop) %>% filter(Prop>0) %>% pull() %>% max()
+
+# how many boxes have a zero value?
+box_no_capelin <- capelin_s1_s4 %>% filter(Prop==0) %>% pull(Prop) %>% length() # 60 boxes!
+
+# change props
+capelin_s1_s4$Prop[capelin_s1_s4$Prop==0] <- cap_min_prop
+capelin_s1_s4$Prop[capelin_s1_s4$Prop==cap_max_prop] <- capelin_s1_s4$Prop[capelin_s1_s4$Prop==cap_max_prop]-(cap_min_prop*box_no_capelin)
+```
+
+Write this out as S1-S4.
+```{r}
+write.csv(capelin_s1_s4, 'capelin_s1_s4.csv', row.names = F)
+```
