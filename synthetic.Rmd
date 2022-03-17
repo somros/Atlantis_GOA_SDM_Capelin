@@ -146,22 +146,13 @@ capelin_atlantis <- capelin_all %>%
   ungroup()
 ```
 
-Join back with Atlantis set and map this.
-```{r, fig.width=12, fig.height=5}
+Join back with Atlantis set.
+```{r}
 atlantis_box_cap <- atlantis_box %>% 
   left_join(capelin_atlantis %>% st_set_geometry(NULL), by='.bx0') %>% 
   rowwise() %>% 
   mutate(Mean_box = ifelse(isTRUE(boundary),NA,Mean_box)) %>% 
-  ungroup() %>% 
-  mutate(Prop = Mean_box/sum(Mean_box,na.rm=T))
-
-atlantis_box_cap %>% ggplot()+
-  geom_sf(aes(fill=Prop))+
-  scale_fill_viridis()+
-  geom_sf(data=coast_sf)+
-  coord_sf(xlim=c(atlantis_bbox$xmin,atlantis_bbox$xmax), ylim=c(atlantis_bbox$ymin,atlantis_bbox$ymax))+
-  theme_bw()+
-  labs(title = 'Capelin synthetic distributions in the GOA', fill = 'Proportion of \ntotal biomass')
+  ungroup() 
 ```
 
 The proportion of total normalized density per box will be used to seed the biomass from a biomass estimate to the model domain. 
@@ -173,12 +164,47 @@ Present issues:
 3. Density seems to be overestimated for crescent box SW of Kodiak - this is bound to happen with the method of assigning points to potentially large and oddly-shaped boxes.
 4. This is calculated from normalized density averaged across boxes and across surveys, with surveys having different coverage (other than different catchability). However, this map seems to align decently with Figure 13. ![Figure 13 from McGowan et al. 2020](image.png).
 
+As always, we are limited in that there is no data from BC. Use equal density at depth in the EGOA as assumption for BC boxes. Here we do not have an actual biomass, use the mean  values of the percentile per box we got above as `Mean_box`. The goal here is to have S values that resemble McGowan et al. (2020).
+```{r, fig.width=12, fig.height=5}
+dz <- c(1,30,100,200,500,1000,4000) # starting from 1 to cut out island boxes
+
+dens_by_depth <- atlantis_box_cap %>%
+  mutate(dz = findInterval(-botz,dz)) %>%
+  filter(between(box_id,70,92)) %>%
+  group_by(dz) %>%
+  summarise(dens=mean(Mean_box, na.rm=T)) %>%
+  st_set_geometry(NULL) %>%
+  ungroup() 
+# need to add layer 1 as there is none of those in EGOA
+dens_by_depth <- rbind(dens_by_depth, data.frame('dz'=1, 'dens'=(dens_by_depth %>% filter(dz==2) %>% pull(dens)))) %>%
+  arrange(dz)
+
+# add density at depth and get new biomass based on that for BC only, leave biomass as is for the other boxes
+atlantis_box_cap1 <- atlantis_box_cap %>%
+  mutate(dz = findInterval(-botz,dz)) %>%
+  left_join(dens_by_depth, by = 'dz') %>%
+  rowwise() %>%
+  mutate(Mean_box = ifelse(box_id<92, Mean_box, dens)) %>%
+  ungroup() %>%
+  select(.bx0,botz,boundary,Mean_box) %>% 
+  mutate(Prop = Mean_box/sum(Mean_box,na.rm=T))
+
+# view
+atlantis_box_cap1 %>% ggplot()+
+  geom_sf(aes(fill=Prop))+
+  scale_fill_viridis()+
+  geom_sf(data=coast_sf)+
+  coord_sf(xlim=c(atlantis_bbox$xmin,atlantis_bbox$xmax), ylim=c(atlantis_bbox$ymin,atlantis_bbox$ymax))+
+  theme_bw()+
+  labs(title = 'Capelin synthetic distributions in the GOA', fill = 'Proportion of \ntotal biomass')
+```
+
 Write out. We need to populate the empty boxes with a number. Zero is drastic, then again there are plenty of zero values in the raster I was given. Let's go with the smallest proportion in the model domain and take it away from the largest. Do so for zero values too. It is close enough to zero but will not prevent the species from existing in those boxes entirely. 
 ```{r}
 # turn NAs to zeroes for this step
-atlantis_box_cap$Prop[is.na(atlantis_box_cap$Prop)] <- 0
+atlantis_box_cap1$Prop[is.na(atlantis_box_cap1$Prop)] <- 0
 
-capelin_s1_s4 <- atlantis_box_cap %>% 
+capelin_s1_s4 <- atlantis_box_cap1 %>% 
   select(.bx0,botz,boundary,Prop) %>% 
   st_set_geometry(NULL) 
 
@@ -192,6 +218,11 @@ box_no_capelin <- capelin_s1_s4 %>% filter(Prop==0 & boundary==F & botz < 0) %>%
 # change props
 capelin_s1_s4$Prop[capelin_s1_s4$Prop==0 & capelin_s1_s4$boundary==F & capelin_s1_s4$botz < 0] <- cap_min_prop
 capelin_s1_s4$Prop[capelin_s1_s4$Prop==cap_max_prop] <- capelin_s1_s4$Prop[capelin_s1_s4$Prop==cap_max_prop]-(cap_min_prop*box_no_capelin)
+```
+
+Make one last check that it adds up to 1.
+```{r}
+capelin_s1_s4 %>% pull(Prop) %>% sum() # looks good
 ```
 
 Write this out as S1-S4.
