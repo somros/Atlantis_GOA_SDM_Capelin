@@ -196,5 +196,5 @@ capelin_s1_s4$Prop[capelin_s1_s4$Prop==cap_max_prop] <- capelin_s1_s4$Prop[capel
 
 Write this out as S1-S4.
 ```{r}
-write.csv(capelin_s1_s4, 'capelin_s1_s4.csv', row.names = F)
+write.csv(capelin_s1_s4, '../output/capelin_s1_s4.csv', row.names = F)
 ```
